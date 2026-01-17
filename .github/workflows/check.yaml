@@ -1,0 +1,47 @@
+name: Check
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TZ: Asia/Shanghai
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get Release Version
+        id: getVersion
+        run: |
+          SING_BOX_VER=$(curl -fsSL -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r 'map(select(.prerelease==false)) | .[].tag_name' | head -n 1)
+          CLOUDFLARED_VER=$(curl -fsSL -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/cloudflare/cloudflared/releases" | jq -r 'map(select(.prerelease==false)) | .[].tag_name' | head -n 1)
+
+          echo "sing-box_next=$SING_BOX_VER" >> $GITHUB_OUTPUT
+          echo "cloudflared_next=$CLOUDFLARED_VER" >> $GITHUB_OUTPUT
+
+      - name: Compare Release Versions
+        id: cacheVersions
+        uses: actions/cache@v5
+        with:
+          path: .releaseVersions
+          key: releaseVersions_${{ steps.getVersion.outputs.sing-box_next }}_${{ steps.getVersion.outputs.cloudflared_next }}
+
+      - name: Save New Release Versions
+        if: ${{ steps.cacheVersions.outputs.cache-hit != 'true' }}
+        run: |
+          echo ${{ steps.getVersion.outputs.sing-box_next }} | tee .releaseVersions
+          echo ${{ steps.getVersion.outputs.cloudflared_next }} | tee -a .releaseVersions
+
+      - name: Invoke workflow
+        if: ${{ steps.cacheVersions.outputs.cache-hit != 'true' }}
+        run: gh workflow run Build -R ${{ github.repository }}
+
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 0
+          keep_minimum_runs: 1

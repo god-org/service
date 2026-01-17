@@ -1,0 +1,138 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TZ: Asia/Shanghai
+
+jobs:
+  Check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      sing-box_next_new: ${{ steps.get-version.outputs.sing-box_next_new }}
+      sing-box_next_renew: ${{ steps.get-version.outputs.sing-box_next_renew }}
+      cloudflared_next_new: ${{ steps.get-version.outputs.cloudflared_next_new }}
+      cloudflared_next_renew: ${{ steps.get-version.outputs.cloudflared_next_renew }}
+      commit: ${{ steps.get-version.outputs.commit }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check version
+        id: get-version
+        run: |
+          SING_BOX_NEXT_NOW=$(awk '/sing-box/{print $NF; exit}' README.md)
+          CLOUDFLARED_NEXT_NOW=$(awk '/cloudflared/{print $NF; exit}' README.md)
+
+          SING_BOX_NEXT_NEW=$(curl -fsSL -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r 'map(select(.prerelease==false)) | .[].tag_name' | head -n 1)
+          CLOUDFLARED_NEXT_NEW=$(curl -fsSL -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/cloudflare/cloudflared/releases" | jq -r 'map(select(.prerelease==false)) | .[].tag_name' | head -n 1)
+
+          echo "SING_BOX_NOW: $SING_BOX_NEXT_NOW | SING_BOX_NEW: $SING_BOX_NEXT_NEW"
+          echo "CLOUDFLARED_NOW: $CLOUDFLARED_NEXT_NOW | CLOUDFLARED_NEW: $CLOUDFLARED_NEXT_NEW"
+
+          SING_BOX_NEXT_RENEW=0
+          CLOUDFLARED_NEXT_RENEW=0
+
+          if [ "$SING_BOX_NEXT_NOW" != "$SING_BOX_NEXT_NEW" ]; then
+            SING_BOX_NEXT_RENEW=1
+          fi
+          if [ "$CLOUDFLARED_NEXT_NOW" != "$CLOUDFLARED_NEXT_NEW" ]; then
+            CLOUDFLARED_NEXT_RENEW=1
+          fi
+
+          echo "sing-box_next_new=$SING_BOX_NEXT_NEW" >> $GITHUB_OUTPUT
+          echo "cloudflared_next_new=$CLOUDFLARED_NEXT_NEW" >> $GITHUB_OUTPUT
+
+          echo "sing-box_next_renew=$SING_BOX_NEXT_RENEW" >> $GITHUB_OUTPUT
+          echo "cloudflared_next_renew=$CLOUDFLARED_NEXT_RENEW" >> $GITHUB_OUTPUT
+
+          DATE=$(date +"%Y/%m/%d")
+          if [[ "$SING_BOX_NEXT_RENEW" == '1' || "$CLOUDFLARED_NEXT_RENEW" == '1' ]]; then
+            COMMIT="$DATE Build to $SING_BOX_NEXT_NEW and $CLOUDFLARED_NEXT_NEW by Github Actions"
+            echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          fi
+
+  # ===========================================================================
+
+  Build-next-image:
+    needs:
+      - Check-version
+    runs-on: ubuntu-latest
+    if: ${{ needs.Check-version.outputs.commit != '' }}
+    env:
+      SING_BOX_VERSION: ${{ needs.Check-version.outputs.sing-box_next_new }}
+      CLOUDFLARED_VERSION: ${{ needs.Check-version.outputs.cloudflared_next_new }}
+      VERSION: ${{ needs.Check-version.outputs.sing-box_next_new }}_${{ needs.Check-version.outputs.cloudflared_next_new }}
+
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          platforms: linux/amd64, linux/arm64
+          build-args: |
+            SING_BOX_VERSION=${{ env.SING_BOX_VERSION }}
+            CLOUDFLARED_VERSION=${{ env.CLOUDFLARED_VERSION }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ env.VERSION }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+
+  Mark-image-version:
+    needs:
+      - Check-version
+      - Build-next-image
+    runs-on: ubuntu-latest
+    if: ${{ needs.Build-next-image.result == 'success' && !cancelled() && !failure() }}
+    env:
+      SING_BOX_NEXT_NEW: ${{ needs.Check-version.outputs.sing-box_next_new }}
+      SING_BOX_NEXT_RENEW: ${{ needs.Check-version.outputs.sing-box_next_renew }}
+      CLOUDFLARED_NEXT_NEW: ${{ needs.Check-version.outputs.cloudflared_next_new }}
+      CLOUDFLARED_NEXT_RENEW: ${{ needs.Check-version.outputs.cloudflared_next_renew }}
+      COMMIT: ${{ needs.Check-version.outputs.commit }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check and Mark
+        run: |
+          if [ "${{ env.SING_BOX_NEXT_RENEW }}" == '1' ]; then
+            sed -i "s/\(\*\*sing-box\*\*:\).*/\1 ${{ env.SING_BOX_NEXT_NEW }}/" README.md
+          fi
+
+          if [ "${{ env.CLOUDFLARED_NEXT_RENEW }}" == '1' ]; then
+            sed -i "s/\(\*\*cloudflared\*\*:\).*/\1 ${{ env.CLOUDFLARED_NEXT_NEW }}/" README.md
+          fi
+
+      - name: Upload to repository
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: ${{ env.COMMIT }}
+
+      - name: ghcr.io cleanup action
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          keep-n-untagged: 0
+          keep-n-tagged: 1
