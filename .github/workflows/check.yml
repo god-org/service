@@ -1,0 +1,43 @@
+name: Check
+
+on:
+  schedule:
+    - cron: 0 16 * * *
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TZ: Asia/Shanghai
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 获取信息
+        id: get
+        env:
+          SB_SRC: SagerNet/sing-box
+          CF_SRC: cloudflare/cloudflared
+        run: |
+          sb_ver=$(gh release list -R "$SB_SRC" -L 1 --exclude-drafts \
+            --exclude-pre-releases --json tagName -q '.[0].tagName')
+          cf_ver=$(gh release list -R "$CF_SRC" -L 1 --exclude-drafts \
+            --exclude-pre-releases --json tagName -q '.[0].tagName')
+
+          printf '%s\n' "key=$sb_ver-$cf_ver" >>"$GITHUB_OUTPUT"
+
+      - name: 缓存校验
+        id: cache
+        uses: actions/cache@v5
+        with:
+          path: .cache
+          key: ${{ steps.get.outputs.key }}
+
+      - name: 触发工作流
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          [[ -f .cache ]] || touch .cache
+          gh workflow run Build
