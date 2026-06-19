@@ -22,7 +22,7 @@ jobs:
       msg: ${{ steps.get.outputs.msg }}
     steps:
       - name: 检出代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 获取信息
         id: get
@@ -112,7 +112,7 @@ jobs:
     if: needs.build.result == 'success' && !cancelled()
     steps:
       - name: 检出全部代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
