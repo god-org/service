@@ -132,7 +132,7 @@ jobs:
           commit_message: ${{ needs.check.outputs.msg }}
 
       - name: 发送结果至 Telegram
-        uses: appleboy/telegram-action@v1.0.1
+        uses: appleboy/telegram-action@v1.0.2
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
