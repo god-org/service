@@ -1,4 +1,4 @@
-ARG SB_VER CF_VER
+ARG SB_VER=latest CF_VER=latest
 
 FROM ghcr.io/sagernet/sing-box:$SB_VER AS sb-src
 FROM cloudflare/cloudflared:$CF_VER AS cf-src
